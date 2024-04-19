@@ -138,8 +138,8 @@ detector = HouseholdNextHandwritingYoloDetector()
 file_names = []
 avg_scores = []
 overall_scores = []
-root = "/media/thanhton/TonDz/Eway/Research/Laos/DataLaos/LAOS_HOUSEHOLD-NEXT_OCR/OCR_SUCCESS"
-root_save = "/media/thanhton/TonDz/Eway/Research/Laos/DataLaos/LAOS_HOUSEHOLD-NEXT_OCR"
+root = "DataLaos/LAOS_HOUSEHOLD-NEXT_OCR/OCR_SUCCESS"
+root_save = "DataLaos/LAOS_HOUSEHOLD-NEXT_OCR/"
 for file_name in tqdm(os.listdir(root)):
     try:
         image = cv2.imread(os.path.join(root, file_name))

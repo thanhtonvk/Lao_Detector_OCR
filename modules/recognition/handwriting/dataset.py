@@ -1,0 +1,166 @@
+import sys, lmdb, six
+from PIL import Image
+import torch
+import torchvision.transforms as transforms
+from modules.recognition.handwriting import lao_parser
+from torch.utils.data import Dataset
+from modules.recognition.handwriting.utils import post_process
+from modules.recognition.handwriting.augmentation import RandAugment, augment_list
+
+
+
+symbols = ['<PAD>', ' ', '-', '.', '/', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', 'A', 'ກ', 'ກັ', 'ກັ່', 'ກັ້', 'ກິ', 'ກິ່', 'ກີ', 'ກີຼ', 'ກີ່', 'ກີ້', 'ກຶ', 'ກື', 'ກື່', 'ກື້', 'ກຸ', 'ກຸ່', 'ກຸ້', 'ກຸ໋', 'ກູ', 'ກູ່', 'ກູ້', 'ກົ', 'ກົ່', 'ກົ້', 'ກົ໋', 'ກຼ', 'ກຼໍ', 'ກ່', 'ກ່ໍ', 'ກ້', 'ກ້ໍ', 'ກ໋', 'ກໍ', 'ຂ', 'ຂັ', 'ຂັ້', 'ຂິ', 'ຂິ່', 'ຂີ', 'ຂີ່', 'ຂີ້', 'ຂຶ', 'ຂຶ່', 'ຂື', 'ຂື່', 'ຂື້', 'ຂຸ', 'ຂຸ່', 'ຂຸ້', 'ຂົ', 'ຂົ່', 'ຂົ້', 'ຂ່', 'ຂ້', 'ຂ້ໍ', 'ຂໍ', 'ຄ', 'ຄັ', 'ຄັ່', 'ຄັ້', 'ຄິ', 'ຄິ່', 'ຄິ້', 'ຄີ', 'ຄີ້', 'ຄຶ', 'ຄຶ້', 'ຄື', 'ຄື່', 'ຄື້', 'ຄື໋', 'ຄຸ', 'ຄຸ່', 'ຄຸ້', 'ຄູ', 'ຄູ່', 'ຄູ້', 'ຄົ', 'ຄົ່', 'ຄົ້', 'ຄ່', 'ຄ່ໍ', 'ຄ້', 'ຄ້ໍ', 'ຄໍ', 'ງ', 'ງັ', 'ງິ', 'ງິ່', 'ງິ້', 'ງີ', 'ງີ່', 'ງີ້', 'ງື', 'ງື່', 'ງຸ້', 'ງູ', 'ງົ', 'ງົ້', 'ງ່', 'ງ້', 'ງ໋', 'ງໍ', 'ຈ', 'ຈັ', 'ຈັ່', 'ຈັ້', 'ຈັ໋', 'ຈິ', 'ຈິ່', 'ຈິ້', 'ຈີ', 'ຈີ່', 'ຈີ້', 'ຈີ໋', 'ຈຶ', 'ຈື', 'ຈື່', 'ຈື້', 'ຈຸ', 'ຈຸ່', 'ຈຸ້', 'ຈຸ໋', 'ຈູ', 'ຈູ່', 'ຈູ້', 'ຈົ', 'ຈົ່', 'ຈົ້', 'ຈ່', 'ຈ້', 'ຈ໋', 'ຈໍ', 'ຊ', 'ຊັ', 'ຊັ່', 'ຊັ້', 'ຊິ', 'ຊິ່', 'ຊີ', 'ຊີ້', 'ຊຶ', 'ຊຶ່', 'ຊຶ້', 'ຊື', 'ຊື່', 'ຊື້', 'ຊຸ', 'ຊຸ້', 'ຊູ', 'ຊູ່', 'ຊູ້', 'ຊົ', 'ຊົ່', 'ຊົ້', 'ຊ່', 'ຊ່ໍ', 'ຊ້', 'ຊ້ໍ', 'ຊໍ', 'ຍ', 'ຍັ', 'ຍັ່', 'ຍິ', 'ຍິ່', 'ຍີ', 'ຍີ່', 'ຍີ້', 'ຍຶ', 'ຍຶ່', 'ຍື', 'ຍື່', 'ຍື້', 'ຍຸ', 'ຍຸ່', 'ຍຸ້', 'ຍູ', 'ຍູ່', 'ຍູ້', 'ຍົ', 'ຍົ່', 'ຍ່', 'ຍ້', 'ຍ້ໍ', 'ຍໍ', 'ດ', 'ດັ', 'ດັ່', 'ດິ', 'ດິ່', 'ດິ້', 'ດີ', 'ດີ່', 'ດີ້', 'ດຶ', 'ດື', 'ດື່', 'ດຸ', 'ດຸ່', 'ດູ', 'ດູ່', 'ດົ', 'ດົ່', 'ດ່', 'ດ່ໍ', 'ດ້', 'ດ໋', 'ດໍ', 'ຕ', 'ຕັ', 'ຕັຼ', 'ຕັ່', 'ຕັ້', 'ຕິ', 'ຕິ່', 'ຕິ້', 'ຕິ໋', 'ຕີ', 'ຕີ່', 'ຕີ້', 'ຕຶ', 'ຕຶ່', 'ຕຶ໋', 'ຕື', 'ຕື່', 'ຕື້', 'ຕຸ', 'ຕຸ່', 'ຕຸ້', 'ຕູ', 'ຕູ່', 'ຕູ້', 'ຕົ', 'ຕົ່', 'ຕົ້', 'ຕຼ', 'ຕ່', 'ຕ່ໍ', 'ຕ້', 'ຕ້ໍ', 'ຕ໋', 'ຕໍ', 'ຖ', 'ຖັ', 'ຖັ້', 'ຖິ', 'ຖິ່', 'ຖິ້', 'ຖີ', 'ຖີ່', 'ຖີ້', 'ຖຶ', 'ຖື', 'ຖື້', 'ຖຸ', 'ຖູ', 'ຖູ້', 'ຖົ', 'ຖົ່', 'ຖົ້', 'ຖ່', 'ຖ່ໍ', 'ຖ້', 'ຖ້ໍ', 'ຖໍ', 'ທ', 'ທັ', 'ທິ', 'ທິ່', 'ທິ້', 'ທີ', 'ທີ່', 'ທຶ', 'ທື', 'ທຸ', 'ທຸ່', 'ທຸ້', 'ທູ', 'ທູ້', 'ທົ', 'ທົ່', 'ທົ້', 'ທ່', 'ທ່ໍ', 'ທ້', 'ທ້ໍ', 'ທ໋', 'ທ໌', 'ທໍ', 'ນ', 'ນັ', 'ນັ່', 'ນັ້', 'ນິ', 'ນິ່', 'ນິ້', 'ນີ', 'ນີ່', 'ນີ້', 'ນຶ', 'ນຶ່', 'ນຶ້', 'ນື', 'ນື່', 'ນື້', 'ນຸ', 'ນຸ່', 'ນຸ້', 'ນຸ໋', 'ນູ', 'ນູ່', 'ນົ', 'ນົ່', 'ນ່', 'ນ່ໍ', 'ນ້', 'ນ້ໍ', 'ນ໋', 'ນໍ', 'ບ', 'ບັ', 'ບັຼ', 'ບັ່', 'ບັ້', 'ບິ', 'ບິ່', 'ບິ້', 'ບີ', 'ບີ່', 'ບີ້', 'ບຶ', 'ບື', 'ບື້', 'ບຸ', 'ບຸ່', 'ບຸ້', 'ບູ', 'ບູ່', 'ບູ້', 'ບົ', 'ບົຼ່', 'ບົ່', 'ບົ້', 'ບຼ', 'ບຼ່', 'ບຼ້', 'ບ່', 'ບ່ໍ', 'ບ້', 'ບ້ໍ', 'ບໍ', 'ປ', 'ປັ', 'ປັ່', 'ປັ້', 'ປິ', 'ປິ່', 'ປິ້', 'ປີ', 'ປີ່', 'ປີ້', 'ປຶ', 'ປຶ່', 'ປື', 'ປື່', 'ປື້', 'ປຸ', 'ປຸ່', 'ປຸ້', 'ປູ', 'ປູ້', 'ປົ', 'ປົ່', 'ປົ້', 'ປຼ', 'ປ່', 'ປ່ໍ', 'ປ້', 'ປ້ໍ', 'ປ໋', 'ປໍ', 'ຜ', 'ຜັ', 'ຜັ່', 'ຜັ້', 'ຜິ', 'ຜິ້', 'ຜີ', 'ຜີ່', 'ຜີ້', 'ຜຶ', 'ຜື', 'ຜຸ', 'ຜຸ່', 'ຜູ', 'ຜູ້', 'ຜົ', 'ຜົ່', 'ຜົ້', 'ຜ່', 'ຜໍ', 'ຝ', 'ຝັ', 'ຝັ່', 'ຝັ້', 'ຝີ', 'ຝື', 'ຝຸ', 'ຝຸ່', 'ຝູ', 'ຝົ', 'ຝ່', 'ຝ້', 'ພ', 'ພັ', 'ພັ່', 'ພັ້', 'ພິ', 'ພິ່', 'ພີ', 'ພີ່', 'ພີ້', 'ພຶ', 'ພື', 'ພື່', 'ພື້', 'ພຸ', 'ພຸ່', 'ພູ', 'ພູ່', 'ພູ້', 'ພົ', 'ພົ່', 'ພົ້', 'ພ່', 'ພ່ໍ', 'ພ້', 'ພ້ໍ', 'ພໍ', 'ຟ', 'ຟັ', 'ຟັ້', 'ຟິ', 'ຟີ', 'ຟຶ', 'ຟຶ້', 'ຟື', 'ຟື່', 'ຟື້', 'ຟຸ', 'ຟຸ່', 'ຟູ', 'ຟົ', 'ຟົ້', 'ຟ່', 'ຟ້', 'ຟ້ໍ', 'ມ', 'ມັ', 'ມັ່', 'ມັ້', 'ມິ', 'ມິ່', 'ມີ', 'ມີ່', 'ມີ້', 'ມຶ', 'ມຶ່', 'ມື', 'ມື່', 'ມື້', 'ມຸ', 'ມຸ່', 'ມຸ້', 'ມູ', 'ມູ່', 'ມູ້', 'ມົ', 'ມົ່', 'ມົ້', 'ມົ໋', 'ມ່', 'ມ້', 'ມ້ໍ', 'ມ໋', 'ມໍ', 'ຢ', 'ຢັ', 'ຢັ່', 'ຢັ້', 'ຢິ', 'ຢິ່', 'ຢິ້', 'ຢີ', 'ຢີ່', 'ຢີ້', 'ຢຶ', 'ຢຶ້', 'ຢື', 'ຢື້', 'ຢຸ', 'ຢຸ່', 'ຢຸ້', 'ຢຸ໋', 'ຢູ', 'ຢົ', 'ຢົ່', 'ຢົ້', 'ຢ່', 'ຢ່ໍ', 'ຢ້', 'ຢ້ໍ', 'ຢ໋', 'ຢໍ', 'ຣ', 'ຣັ', 'ຣິ', 'ຣີ', 'ຣຶ', 'ຣຸ', 'ຣູ', 'ຣົ', 'ຣ່', 'ຣ້', 'ຣ້ໍ', 'ຣ໋', 'ຣໍ', 'ລ', 'ລັ', 'ລັ່', 'ລັ້', 'ລິ', 'ລິ່', 'ລິ້', 'ລີ', 'ລີ່', 'ລີ້', 'ລຶ', 'ລຶ່', 'ລື', 'ລື່', 'ລື້', 'ລຸ', 'ລຸ່', 'ລຸ້', 'ລູ', 'ລູ່', 'ລູ້', 'ລົ', 'ລົ່', 'ລົ້', 'ລ່', 'ລ່ໍ', 'ລ້', 'ລ້ໍ', 'ລ໋', 'ລໍ', 'ວ', 'ວັ', 'ວັ່', 'ວັ້', 'ວິ', 'ວີ', 'ວີ່', 'ວີ້', 'ວຶ', 'ວຶ່', 'ວື', 'ວື່', 'ວື້', 'ວຸ', 'ວູ', 'ວົ', 'ວົ່', 'ວົ້', 'ວຼ', 'ວ່', 'ວ້', 'ວ໋', 'ວໍ', 'ສ', 'ສັ', 'ສັ່', 'ສັ້', 'ສິ', 'ສິ່', 'ສີ', 'ສີ່', 'ສີ້', 'ສຶ', 'ສື', 'ສື່', 'ສື້', 'ສຸ', 'ສຸ່', 'ສຸ້', 'ສູ', 'ສູ້', 'ສົ', 'ສົ່', 'ສົ້', 'ສ່', 'ສ່ໍ', 'ສ້', 'ສ້ໍ', 'ສໍ', 'ຫ', 'ຫັ', 'ຫັຼ', 'ຫັ້', 'ຫິ', 'ຫິຼ', 'ຫິຼ່', 'ຫິຼ້', 'ຫີ', 'ຫີຼ', 'ຫີຼ່', 'ຫີຼ້', 'ຫີ່', 'ຫຶ', 'ຫື', 'ຫືຼ', 'ຫືຼ່', 'ຫືຼ້', 'ຫື້', 'ຫຸ', 'ຫຸ່', 'ຫຸ້', 'ຫູ', 'ຫົ', 'ຫົຼ', 'ຫົຼ່', 'ຫົຼ້', 'ຫົ່', 'ຫົ້', 'ຫຼ', 'ຫຼ່', 'ຫຼ່ໍ', 'ຫຼ້', 'ຫຼ້ໍ', 'ຫ່', 'ຫ່ໍ', 'ຫ້', 'ຫ້ໍ', 'ຫໍ', 'ອ', 'ອັ', 'ອັ່', 'ອັ້', 'ອິ', 'ອິ່', 'ອິ້', 'ອິ໋', 'ອີ', 'ອີ່', 'ອີ້', 'ອຶ', 'ອຶ່', 'ອື', 'ອື່', 'ອື້', 'ອຸ', 'ອຸ່', 'ອຸ້', 'ອູ', 'ອູ່', 'ອູ້', 'ອົ', 'ອົ່', 'ອົ້', 'ອ່', 'ອ່ໍ', 'ອ້', 'ອ້ໍ', 'ອ໋', 'ອໍ', 'ຮ', 'ຮັ', 'ຮັ່', 'ຮິ', 'ຮີ', 'ຮີ່', 'ຮີ້', 'ຮຶ', 'ຮື', 'ຮື່', 'ຮື້', 'ຮຸ', 'ຮຸ່', 'ຮູ', 'ຮູ້', 'ຮົ', 'ຮົ່', 'ຮົ້', 'ຮ່', 'ຮ່ໍ', 'ຮ້', 'ຮ້ໍ', 'ຮໍ', 'ະ', 'າ', 'າ່', 'າ້', 'າໍ', 'ຽ', 'ຽ່', 'ເ', 'ເຶ', 'ເື', 'ແ', 'ໂ', 'ໃ', 'ໄ']
+
+def load_categories():
+    s2i = {sbj: idx for idx, sbj in enumerate(symbols)}
+    i2s = {idx: sbj for idx, sbj in enumerate(symbols)}
+    return s2i, i2s
+
+
+s2i, i2s = load_categories()
+
+class Converter:
+    def __init__(self):
+        self.s2i, self.i2s = load_categories()
+
+    def encode(self, s):
+        return self.s2i[s]
+
+    def decode(self, i):
+        s = self.i2s[i]
+        if s in ['<PAD>']:
+            return ''
+        else:
+            return s
+        
+
+class LmdbDataset(Dataset):
+    def __init__(self, root, set_name, opt):
+        self.root = root
+        self.opt = opt
+        self.data_trans = DataTransformer(opt, set_name)
+        self.env = lmdb.open(root, max_readers=32, readonly=True, lock=False, readahead=False, meminit=False)
+        if not self.env:
+            print('cannot create lmdb from %s' % (root))
+            sys.exit(0)
+
+        with self.env.begin(write=False) as txn:
+            nSamples = int(txn.get('num-samples'.encode()))
+            self.nSamples = nSamples
+
+            self.filtered_index_list = []
+            for index in range(self.nSamples):
+                index += 1
+                label_key = 'label-%09d'.encode() % index
+                label = txn.get(label_key).decode('utf-8')
+                label = label.replace("ຳ", "ໍາ").replace("ໝ", "ຫມ").replace("ໜ", "ຫນ")
+
+                if lao_parser.is_valid(label) and label != '':
+                    if len(lao_parser.parse_text(label)) > self.opt.batch_max_length:
+                        continue
+                    else:
+                        self.filtered_index_list.append(index)
+
+            self.nSamples = len(self.filtered_index_list)
+
+    def __len__(self):
+        return self.nSamples
+
+    def __getitem__(self, index):
+        assert index <= len(self), 'index range error'
+        index = self.filtered_index_list[index]
+
+        with self.env.begin(write=False) as txn:
+            label_key = 'label-%09d'.encode() % index
+            label = txn.get(label_key).decode('utf-8')
+            label = label.replace("ຳ", "ໍາ").replace("ໝ", "ຫມ").replace("ໜ", "ຫນ")
+            label = lao_parser.parse_text(label)
+            img_key = 'image-%09d'.encode() % index
+            tag_key = 'tag-%09d'.encode() % index
+            imgbuf = txn.get(img_key)
+            tag = txn.get(tag_key)
+
+            buf = six.BytesIO()
+            buf.write(imgbuf)
+            buf.seek(0)
+            try:
+                if self.opt.rgb:
+                    img = Image.open(buf).convert('RGB')
+                else:
+                    img = Image.open(buf).convert('L')
+
+            except IOError:
+                print(f'Corrupted image for {index}')
+                if self.opt.rgb:
+                    img = Image.new('RGB', (self.opt.imgW, self.opt.imgH))
+                else:
+                    img = Image.new('L', (self.opt.imgW, self.opt.imgH))
+                label = '[dummy_label]'
+
+        image, pad_mask, target, label = self.data_trans(img, label)
+        return image, pad_mask, target, label, img_key.decode(), tag.decode()
+
+
+class Resize:
+    def __init__(self, nsize):
+        self.nsize = nsize
+        
+    def __call__(self, image):
+        factor_x = image.width / self.nsize[0]
+        factor_y = image.height / self.nsize[1]
+        factor = max(factor_x, factor_y)
+        new_size = (min(self.nsize[0], int(image.width / factor)), min(self.nsize[1], int(image.height / factor)))
+        image = image.resize(size=new_size)
+        new_image = Image.new('RGB', self.nsize, color=(0, 0, 0))
+        new_image.paste(image, (0, (self.nsize[1] - new_size[1]) // 2))
+
+        foreground = Image.new('L', new_size, color=0)
+        background = Image.new('L', self.nsize, color=1)
+        background.paste(foreground, (0, (self.nsize[1] - new_size[1]) // 2))
+
+        return new_image, background
+
+
+class DataTransformer:
+    def __init__(self, opt, set_name):
+        self.resize = Resize((opt.imgW, opt.imgH))
+        self.opt = opt
+        self.set_name = set_name
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=0.445, std=0.269)
+        ])
+        self.convert = Converter()
+        self.randaug = RandAugment(3, 5, augment_list())
+
+    def __call__(self, image, label=None):
+        if self.set_name == 'train':
+            image = image.convert('RGB')
+            image, _ = self.randaug(image)
+
+        image, pad_mask = self.resize(image)
+        image = image.convert('L')
+        image = self.transform(image)
+        pad_mask = transforms.ToTensor()(pad_mask).bool()
+        if label is not None:
+            target = torch.as_tensor(list(map(self.convert.encode, label)) + [self.convert.encode('<PAD>')] * (self.opt.batch_max_length - len(label))).long()
+            return image, pad_mask[:, ::4, ::4], target, post_process(''.join(label))
+        else:
+            return image, pad_mask[:, ::4, ::4]
+
+def train_collate_fn(batch):
+    image = torch.stack([sample[0] for sample in batch], dim=0)
+    pad_mask = torch.stack([sample[1] for sample in batch], dim=0)
+    target = torch.stack([sample[2] for sample in batch], dim=0)
+    return image, pad_mask, target
+
+
+def valid_collate_fn(batch):
+    image = torch.stack([sample[0] for sample in batch], dim=0)
+    pad_mask = torch.stack([sample[1] for sample in batch], dim=0)
+    target = torch.stack([sample[2] for sample in batch], dim=0)
+    label = [sample[3] for sample in batch]
+    img_key = [sample[4] for sample in batch]
+    tag = [sample[5] for sample in batch]
+    return image, pad_mask, target, label, img_key, tag
+

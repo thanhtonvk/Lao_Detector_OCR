@@ -91,3 +91,42 @@ class PassportYoloDetector(PassportDetector):
                 item["img"] = cropped__img
                 detection_fields[k] = [item]
         return PassportDetection(content=detection_fields)
+import os, matplotlib.pyplot as plt
+import cv2
+import pandas as pd
+from modules.readers.reader import read
+from PIL import Image
+from tqdm import tqdm
+
+detector = PassportYoloDetector()
+file_names = []
+avg_scores = []
+overall_scores = []
+root = "DataLaos/LAOS_ID-CARD_OCR/OCR_SUCCESS"
+root_save = "DataLaos/LAOS_ID-CARD_OCR"
+for file_name in tqdm(os.listdir(root)):
+    try:
+        image = cv2.imread(os.path.join(root, file_name))
+        overall_score = 1
+        avg_score = 0
+        count = 0
+        output = detector.detect_fields(image)
+        detector_result = output.content.dict(exclude_none=True)
+        detector_result_keys = detector_result.keys()
+        for key in detector_result_keys:
+            for img in detector_result[key]:
+                result = read([Image.fromarray(img['img'])])
+                for _, score in result:
+                    overall_score *= score.item()
+                    avg_score += score.item()
+                    count += 1
+        avg_score = avg_score / count
+        file_names.append(file_name)
+        avg_scores.append(avg_score)
+        overall_scores.append(overall_score)
+    except Exception as e:
+        print(file_name)
+        print(e)
+data = {'file_name': file_names, 'avg_score': avg_scores, 'overall_score': overall_scores}
+df = pd.DataFrame(data)
+df.to_csv(f'{root_save}/score.csv', index=False)

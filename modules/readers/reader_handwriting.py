@@ -19,7 +19,7 @@ opt = parser.parse_args()
 data_trans = DataTransformer(opt, 'valid')
 convert = Converter()
 # ort_session = onnxruntime.InferenceSession(opt.onnx_model_path)
-ort_session = onnx_model_inference(opt.onnx_model_path,'cpu')
+ort_session = onnx_model_inference(opt.onnx_model_path)
 
 def read(image_list, dictionary_list=None):
     input_pairs = [data_trans(image) for image in image_list]

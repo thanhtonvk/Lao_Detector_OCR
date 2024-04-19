@@ -26,21 +26,17 @@ def onnx_model_inference(model: str,device = 'gpu'):
     print(cuda)
     session_options = onnxruntime.SessionOptions()
     session_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-    # session_options.add_session_config_entry('session.dynamic_block_base', '4')
-    if device=='gpu':
-        execution_providers = ["ROCMExecutionProvider","CPUExecutionProvider"]
-    else:
-        execution_providers = ["CPUExecutionProvider"]
-    # if cuda:
-    #     cuda_provider_options = {
-    #         "arena_extend_strategy": "kSameAsRequested",
-    #         "cudnn_conv_algo_search": "DEFAULT",
-    #     }
-    #     execution_providers = [
-    #         ("CUDAExecutionProvider", cuda_provider_options),
-    #         "CPUExecutionProvider",
-    #     ]
-    # print("[onnx_model_load] InferenceSession", model, execution_providers)
+    session_options.add_session_config_entry('session.dynamic_block_base', '4')
+    if cuda:
+        cuda_provider_options = {
+            "arena_extend_strategy": "kSameAsRequested",
+            "cudnn_conv_algo_search": "DEFAULT",
+        }
+        execution_providers = [
+            ("CUDAExecutionProvider", cuda_provider_options),
+            "CPUExecutionProvider",
+        ]
+    print("[onnx_model_load] InferenceSession", model, execution_providers)
     model_content = model_path
     # if MODEL_IS_ENCODE:
     #     model_content = load_encode_file(model_path, generate_encryption_key(config.PUBLIC_KEY))
